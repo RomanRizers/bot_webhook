@@ -1,4 +1,3 @@
-
 import os, re, json, random, warnings
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +14,7 @@ load_dotenv()
 warnings.filterwarnings("ignore")
 
 TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]   # https://your-app.up.railway.app
+WEBHOOK_URL = os.environ["WEBHOOK_URL"].rstrip("/")
 PORT        = int(os.environ.get("PORT", 5000))
 
 bot = telebot.TeleBot(TOKEN)
@@ -68,7 +67,7 @@ else:
 def cmd_start(message):
     name = message.from_user.first_name
     bot.send_message(message.chat.id,
-        f"Привет, {name}! Я учебный бот. Задай вопрос про расписание, сессию, справки и другое.")
+        f"Привет, {name}! Задай вопрос про расписание, сессию, справки и другое.")
 
 @bot.message_handler(content_types=["text"])
 def handle_text(message):
@@ -99,9 +98,14 @@ def health():
 def index():
     return jsonify({"status": "running"})
 
-# ── Запуск ────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+# ── Установка webhook при старте ──────────────────────────────────────────────
+def setup_webhook():
     bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    print(f"Webhook: {WEBHOOK_URL}/{TOKEN}")
+    url = f"{WEBHOOK_URL}/{TOKEN}"
+    bot.set_webhook(url=url)
+    print(f"Webhook установлен: {url}")
+
+setup_webhook()
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
