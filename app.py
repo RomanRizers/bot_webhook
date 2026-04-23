@@ -34,32 +34,51 @@ def normalize(text):
     text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
 
+MODEL_PKL = Path("model.pkl")
+
 def _train():
     global _vec, _X_v, _clf, _cfg, _fail_phrases
     try:
+        import pickle
         from sklearn.feature_extraction.text import CountVectorizer
         from sklearn.neural_network import MLPClassifier
+
         cfg_path = Path("edu_bot_config_lab3.json")
         if not cfg_path.exists():
             print("[MODEL] edu_bot_config_lab3.json не найден", flush=True)
             return
+
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        X_texts, y_labels = [], []
-        for intent, data in cfg["intents"].items():
-            for ex in data.get("examples", []):
-                if isinstance(ex, str) and ex.strip():
-                    X_texts.append(normalize(ex))
-                    y_labels.append(intent)
-        vec = CountVectorizer(analyzer="char_wb", ngram_range=(3, 5), dtype=float)
-        X_v = vec.fit_transform(X_texts)
-        clf = MLPClassifier(hidden_layer_sizes=(64,), max_iter=200, random_state=42, early_stopping=True)
-        clf.fit(X_v, y_labels)
-        _vec, _X_v, _clf, _cfg = vec, X_v, clf, cfg
+        _cfg = cfg
         _fail_phrases = cfg.get("failure_phrases", FAIL_PHRASES)
+
+        if MODEL_PKL.exists():
+            print("[MODEL] Загружаю из model.pkl...", flush=True)
+            with open(MODEL_PKL, "rb") as f:
+                vec, X_v, clf = pickle.load(f)
+        else:
+            print("[MODEL] model.pkl не найден, обучаю...", flush=True)
+            X_texts, y_labels = [], []
+            for intent, data in cfg["intents"].items():
+                for ex in data.get("examples", []):
+                    if isinstance(ex, str) and ex.strip():
+                        X_texts.append(normalize(ex))
+                        y_labels.append(intent)
+            vec = CountVectorizer(analyzer="char_wb", ngram_range=(3, 5), dtype=float)
+            X_v = vec.fit_transform(X_texts)
+            clf = MLPClassifier(hidden_layer_sizes=(64,), max_iter=200, random_state=42, early_stopping=True)
+            clf.fit(X_v, y_labels)
+            with open(MODEL_PKL, "wb") as f:
+                pickle.dump((vec, X_v, clf), f)
+            print("[MODEL] Сохранено в model.pkl", flush=True)
+
+        _vec, _X_v, _clf = vec, X_v, clf
         _model_ready.set()
         print(f"[MODEL] Готов! Интентов: {len(cfg['intents'])}", flush=True)
     except Exception as e:
-        print(f"[MODEL] Ошибка обучения: {e}", flush=True)
+        import traceback
+        print(f"[MODEL] Ошибка: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 def bot_reply(text):
     if not _model_ready.is_set():
