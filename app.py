@@ -52,7 +52,7 @@ def _train():
                     y_labels.append(intent)
         vec = CountVectorizer(analyzer="char_wb", ngram_range=(3, 5))
         X_v = vec.fit_transform(X_texts)
-        clf = MLPClassifier(hidden_layer_sizes=(160,), max_iter=500, random_state=42)
+        clf = MLPClassifier(hidden_layer_sizes=(64,), max_iter=200, random_state=42, early_stopping=True)
         clf.fit(X_v, y_labels)
         _vec, _X_v, _clf, _cfg = vec, X_v, clf, cfg
         _fail_phrases = cfg.get("failure_phrases", FAIL_PHRASES)
