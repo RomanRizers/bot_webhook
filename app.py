@@ -100,12 +100,24 @@ def index():
 
 # ── Установка webhook при старте ──────────────────────────────────────────────
 def setup_webhook():
-    bot.remove_webhook()
     url = f"{WEBHOOK_URL}/{TOKEN}"
+    bot.remove_webhook()
     bot.set_webhook(url=url)
-    print(f"Webhook установлен: {url}")
+    print(f"[WEBHOOK] Установлен: {url}", flush=True)
 
-setup_webhook()
+@app.route("/setup")
+def manual_setup():
+    try:
+        setup_webhook()
+        return jsonify({"ok": True, "webhook": f"{WEBHOOK_URL}/{TOKEN}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+print(f"[STARTUP] PORT={PORT}  WEBHOOK_URL={WEBHOOK_URL}", flush=True)
+try:
+    setup_webhook()
+except Exception as e:
+    print(f"[STARTUP] setup_webhook failed: {e}", flush=True)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
