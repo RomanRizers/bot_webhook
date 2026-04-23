@@ -1,0 +1,7 @@
+flask
+pyTelegramBotAPI
+gtts
+scikit-learn
+pandas
+python-dotenv
+gunicorn
