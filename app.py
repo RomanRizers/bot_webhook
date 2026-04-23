@@ -10,9 +10,9 @@ from dotenv import load_dotenv
 load_dotenv()
 warnings.filterwarnings("ignore")
 
-TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 WEBHOOK_URL = os.environ["WEBHOOK_URL"].rstrip("/")
-PORT        = int(os.environ.get("PORT", 5000))
+PORT = int(os.environ.get("PORT", 5001))
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -26,21 +26,25 @@ FAIL_PHRASES = [
     "Уточни, что именно тебя интересует.",
 ]
 
-_vec = _X_v = _clf = _cfg = _fail_phrases = None
+_vec = _X_v = _clf = _cfg = _fail_phrases = _label_encoder = None
 _model_ready = threading.Event()
+
 
 def normalize(text):
     text = text.lower().replace("ё", "е")
     text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
 
+
 MODEL_PKL = Path("model.pkl")
 
+
 def _train():
-    global _vec, _X_v, _clf, _cfg, _fail_phrases
+    global _vec, _X_v, _clf, _cfg, _fail_phrases, _label_encoder
     try:
         import pickle
         from sklearn.feature_extraction.text import CountVectorizer
+        from sklearn.preprocessing import LabelEncoder
         from sklearn.neural_network import MLPClassifier
 
         cfg_path = Path("edu_bot_config_lab3.json")
@@ -55,7 +59,12 @@ def _train():
         if MODEL_PKL.exists():
             print("[MODEL] Загружаю из model.pkl...", flush=True)
             with open(MODEL_PKL, "rb") as f:
-                vec, X_v, clf = pickle.load(f)
+                saved = pickle.load(f)
+            if isinstance(saved, tuple) and len(saved) == 4:
+                vec, X_v, clf, label_encoder = saved
+            else:
+                vec, X_v, clf = saved
+                label_encoder = None
         else:
             print("[MODEL] model.pkl не найден, обучаю...", flush=True)
             X_texts, y_labels = [], []
@@ -66,44 +75,63 @@ def _train():
                         y_labels.append(intent)
             vec = CountVectorizer(analyzer="char_wb", ngram_range=(3, 5), dtype=float)
             X_v = vec.fit_transform(X_texts)
-            clf = MLPClassifier(hidden_layer_sizes=(64,), max_iter=200, random_state=42, early_stopping=True)
-            clf.fit(X_v, y_labels)
+            label_encoder = LabelEncoder()
+            y_encoded = label_encoder.fit_transform(y_labels)
+            clf = MLPClassifier(
+                hidden_layer_sizes=(64,),
+                max_iter=200,
+                random_state=42,
+                early_stopping=True,
+            )
+            clf.fit(X_v, y_encoded)
             with open(MODEL_PKL, "wb") as f:
-                pickle.dump((vec, X_v, clf), f)
+                pickle.dump((vec, X_v, clf, label_encoder), f)
             print("[MODEL] Сохранено в model.pkl", flush=True)
 
-        _vec, _X_v, _clf = vec, X_v, clf
+        _vec, _X_v, _clf, _label_encoder = vec, X_v, clf, label_encoder
         _model_ready.set()
         print(f"[MODEL] Готов! Интентов: {len(cfg['intents'])}", flush=True)
     except Exception as e:
         import traceback
+
         print(f"[MODEL] Ошибка: {e}", flush=True)
         print(traceback.format_exc(), flush=True)
+
 
 def bot_reply(text):
     if not _model_ready.is_set():
         return "Загружаюсь, подожди 30 секунд и спроси снова."
     from sklearn.metrics.pairwise import cosine_similarity
-    tn   = normalize(text)
+
+    tn = normalize(text)
     feat = _vec.transform([tn])
     conf = float(_clf.predict_proba(feat).max())
-    sim  = float(cosine_similarity(feat, _X_v).max())
+    sim = float(cosine_similarity(feat, _X_v).max())
     if conf < CONFIDENCE_THRESHOLD or sim < SIMILARITY_THRESHOLD:
         return random.choice(_fail_phrases)
-    intent = _clf.predict(feat)[0]
+    intent_pred = _clf.predict(feat)[0]
+    intent = (
+        _label_encoder.inverse_transform([intent_pred])[0]
+        if _label_encoder is not None
+        else intent_pred
+    )
     responses = _cfg["intents"][intent].get("responses", FAIL_PHRASES)
     return random.choice(responses) if responses else random.choice(_fail_phrases)
+
 
 # ── Обработчики ───────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["start", "help"])
 def cmd_start(message):
     name = message.from_user.first_name
-    bot.send_message(message.chat.id,
-        f"Привет, {name}! Задай вопрос про расписание, сессию, справки и другое.")
+    bot.send_message(
+        message.chat.id,
+        f"Привет, {name}! Задай вопрос про расписание, сессию, справки и другое.",
+    )
+
 
 @bot.message_handler(content_types=["text"])
 def handle_text(message):
-    name   = message.from_user.first_name
+    name = message.from_user.first_name
     answer = bot_reply(message.text)
     print(f"[TEXT] {name}: {message.text}", flush=True)
     print(f"[TEXT] Бот: {answer}", flush=True)
@@ -112,6 +140,7 @@ def handle_text(message):
     gTTS(text=answer, lang="ru").write_to_fp(buf)
     buf.seek(0)
     bot.send_voice(message.chat.id, buf)
+
 
 # ── Flask эндпоинты ───────────────────────────────────────────────────────────
 @app.route(f"/{TOKEN}", methods=["POST"])
@@ -122,13 +151,16 @@ def webhook():
         return jsonify({"ok": True})
     return "Bad Request", 400
 
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "model_ready": _model_ready.is_set()})
 
+
 @app.route("/")
 def index():
     return jsonify({"status": "running"})
+
 
 @app.route("/setup")
 def manual_setup():
@@ -138,6 +170,7 @@ def manual_setup():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
 # ── Webhook в фоне ────────────────────────────────────────────────────────────
 def _do_setup_webhook():
     url = f"{WEBHOOK_URL}/{TOKEN}"
@@ -145,11 +178,13 @@ def _do_setup_webhook():
     bot.set_webhook(url=url)
     print(f"[WEBHOOK] Установлен: {url}", flush=True)
 
+
 def _setup_webhook_bg():
     try:
         _do_setup_webhook()
     except Exception as e:
         print(f"[WEBHOOK] Ошибка: {e}", flush=True)
+
 
 # ── Старт ─────────────────────────────────────────────────────────────────────
 print(f"[STARTUP] PORT={PORT}  WEBHOOK_URL={WEBHOOK_URL}", flush=True)
