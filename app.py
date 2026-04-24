@@ -17,7 +17,6 @@ PORT = int(os.environ.get("PORT", 5001))
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# ── ML-бот (обучается в фоне) ─────────────────────────────────────────────────
 CONFIDENCE_THRESHOLD = 0.45
 SIMILARITY_THRESHOLD = 0.25
 FAIL_PHRASES = [
@@ -142,7 +141,6 @@ def handle_text(message):
     bot.send_voice(message.chat.id, buf)
 
 
-# ── Flask эндпоинты ───────────────────────────────────────────────────────────
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     if request.content_type == "application/json":
@@ -171,7 +169,6 @@ def manual_setup():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-# ── Webhook в фоне ────────────────────────────────────────────────────────────
 def _do_setup_webhook():
     url = f"{WEBHOOK_URL}/{TOKEN}"
     bot.remove_webhook()
@@ -186,7 +183,6 @@ def _setup_webhook_bg():
         print(f"[WEBHOOK] Ошибка: {e}", flush=True)
 
 
-# ── Старт ─────────────────────────────────────────────────────────────────────
 print(f"[STARTUP] PORT={PORT}  WEBHOOK_URL={WEBHOOK_URL}", flush=True)
 threading.Thread(target=_train, daemon=True).start()
 threading.Thread(target=_setup_webhook_bg, daemon=True).start()
